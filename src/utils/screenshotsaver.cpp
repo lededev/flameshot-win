@@ -180,8 +180,12 @@ bool saveToFilesystemGUI(const QPixmap& capture)
         defaultSavePath =
           QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
     }
+    // check if ctrl is pressed and if so, save as jpg regardless of the default extension
+    QString saveExt = (QApplication::keyboardModifiers() & Qt::ControlModifier)?
+        "jpg":
+        ConfigHandler().saveAsFileExtension();
     QString savePath = FileNameHandler().properScreenshotPath(
-      defaultSavePath, ConfigHandler().saveAsFileExtension());
+      defaultSavePath, saveExt);
 #if defined(Q_OS_MACOS)
     for (QWidget* widget : qApp->topLevelWidgets()) {
         QString className(widget->metaObject()->className());
