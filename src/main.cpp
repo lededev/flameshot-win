@@ -118,13 +118,30 @@ void configureApp(bool gui)
     }
 
     // Configure translations
-    for (const QString& path : PathInfo::translationsPaths()) {
-        bool match = translator->load(QLocale(),
-                                     QStringLiteral("Internationalization"),
-                                     QStringLiteral("_"),
-                                     path);
-        if (match) {
-            break;
+    QString languageCode = ConfigHandler().language();
+
+    if (languageCode.isEmpty()) {
+        // Use system locale
+        for (const QString& path : PathInfo::translationsPaths()) {
+            bool match = translator->load(QLocale(),
+                                         QStringLiteral("Internationalization"),
+                                         QStringLiteral("_"),
+                                         path);
+            if (match) {
+                break;
+            }
+        }
+    } else {
+        // Use specified language
+        QLocale specifiedLocale(languageCode);
+        for (const QString& path : PathInfo::translationsPaths()) {
+            bool match = translator->load(specifiedLocale,
+                                         QStringLiteral("Internationalization"),
+                                         QStringLiteral("_"),
+                                         path);
+            if (match) {
+                break;
+            }
         }
     }
 

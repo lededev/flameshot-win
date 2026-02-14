@@ -59,6 +59,7 @@ private slots:
     void setSelGeoHideTime(int v);
     void setJpegQuality(int v);
     void setDelayTakeScreenshotTime(int v);
+    void languageChanged(const QString& language);
 
 private:
     const QString chooseFolder(const QString& currentPath = "");
@@ -95,6 +96,7 @@ private:
     void initShowSelectionGeometry();
     void initJpegQuality();
     void initDelayTakeScreenshotTime();
+    void initLanguageSelection();
 
     void _updateComponents(bool allowEmptySavePath);
 
@@ -141,4 +143,5 @@ private:
     QSpinBox* m_xywhTimeout;
     QSpinBox* m_jpegQuality;
     QSpinBox* m_delayTakeScreenshotTime;
+    QComboBox* m_languageSelection;
 };

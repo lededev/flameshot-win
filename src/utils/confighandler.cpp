@@ -128,6 +128,7 @@ static QMap<class QString, QSharedPointer<ValueHandler>>
     OPTION("showSelectionGeometryHideTime", LowerBoundedInt  (0, 3000)),
     OPTION("jpegQuality", BoundedInt     (0,100,75)),
     OPTION("delayTakeScreenshotTime", BoundedInt             (0, 30000, 5000)),
+    OPTION("language"                  ,String             ( ""            )),
 };
 
 static QMap<QString, QSharedPointer<KeySequence>> recognizedShortcuts = {

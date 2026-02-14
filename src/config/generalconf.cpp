@@ -3,6 +3,7 @@
 #include "generalconf.h"
 #include "src/core/flameshot.h"
 #include "src/utils/confighandler.h"
+#include "src/utils/pathinfo.h"
 #include <QCheckBox>
 #include <QComboBox>
 #include <QFile>
@@ -11,6 +12,7 @@
 #include <QImageWriter>
 #include <QLabel>
 #include <QLineEdit>
+#include <QLocale>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSettings>
@@ -19,6 +21,7 @@
 #include <QStandardPaths>
 #include <QTextCodec>
 #include <QVBoxLayout>
+#include <algorithm>
 
 GeneralConf::GeneralConf(QWidget* parent)
   : QWidget(parent)
@@ -67,6 +70,7 @@ GeneralConf::GeneralConf(QWidget* parent)
     initSquareMagnifier();
     initJpegQuality();
     initDelayTakeScreenshotTime();
+    initLanguageSelection();
     // this has to be at the end
     initConfigButtons();
     updateComponents();
@@ -107,6 +111,14 @@ void GeneralConf::_updateComponents(bool allowEmptySavePath)
     m_screenshotPathFixedCheck->setChecked(config.savePathFixed());
     m_uploadHistoryMax->setValue(config.uploadHistoryMax());
     m_undoLimit->setValue(config.undoLimit());
+
+    QString selectedLanguage = config.language();
+    int languageIndex = m_languageSelection->findData(selectedLanguage);
+    if (languageIndex >= 0) {
+        m_languageSelection->setCurrentIndex(languageIndex);
+    } else {
+        m_languageSelection->setCurrentIndex(0); // Default to system language
+    }
 
     if (allowEmptySavePath || !config.savePath().isEmpty()) {
         m_savePath->setText(config.savePath());
@@ -846,6 +858,69 @@ void GeneralConf::setJpegQuality(int v)
 void GeneralConf::setDelayTakeScreenshotTime(int v)
 {
     ConfigHandler().setDelayTakeScreenshotTime(v);
+}
+
+void GeneralConf::initLanguageSelection()
+{
+    auto* box = new QGroupBox(tr("Language"));
+    box->setFlat(true);
+    m_layout->addWidget(box);
+
+    auto* vboxLayout = new QVBoxLayout();
+    box->setLayout(vboxLayout);
+
+    auto* langLayout = new QHBoxLayout();
+    langLayout->addWidget(new QLabel(tr("Select Language")));
+
+    m_languageSelection = new QComboBox(this);
+
+    // Add system language option
+    m_languageSelection->addItem(tr("Follow System Language"), "");
+
+    // Get available translation files
+    QStringList availableLanguages;
+    for (const QString& path : PathInfo::translationsPaths()) {
+        QDir translationDir(path);
+        QStringList filters;
+        filters << "Internationalization_*.qm";
+        QStringList files = translationDir.entryList(filters);
+
+        for (const QString& file : files) {
+            // Extract language code from filename (e.g., "Internationalization_zh_CN.qm" -> "zh_CN")
+            QString langCode = file.section('_', 1).section('.', 0, 0);
+            if (!langCode.isEmpty() && !availableLanguages.contains(langCode)) {
+                availableLanguages.append(langCode);
+            }
+        }
+    }
+
+    // Sort available languages alphabetically
+    std::sort(availableLanguages.begin(), availableLanguages.end());
+
+    // Add language options
+    for (const QString& langCode : availableLanguages) {
+        QLocale locale(langCode);
+        QString languageName = locale.nativeLanguageName();
+        // Capitalize first letter
+        if (!languageName.isEmpty()) {
+            languageName[0] = languageName[0].toUpper();
+        }
+        m_languageSelection->addItem(languageName, langCode);
+    }
+
+    connect(m_languageSelection,
+            static_cast<void (QComboBox::*)(const QString&)>(&QComboBox::currentTextChanged),
+            this,
+            &GeneralConf::languageChanged);
+
+    langLayout->addWidget(m_languageSelection);
+    vboxLayout->addLayout(langLayout);
+}
+
+void GeneralConf::languageChanged(const QString& language)
+{
+    QString langCode = m_languageSelection->currentData().toString();
+    ConfigHandler().setLanguage(langCode);
 }
 
 void GeneralConf::setGeometryLocation(int index)

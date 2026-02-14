@@ -134,6 +134,7 @@ public:
     CONFIG_GETTER_SETTER(delayTakeScreenshotTime,
                          setDelayTakeScreenshotTime,
                          int)
+    CONFIG_GETTER_SETTER(language, setLanguage, QString)
 
     // SPECIAL CASES
     bool startupLaunch();
