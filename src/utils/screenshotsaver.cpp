@@ -25,6 +25,8 @@
 #include <qmimedatabase.h>
 #if defined(Q_OS_MACOS)
 #include "src/widgets/capture/capturewidget.h"
+#elif defined(Q_OS_WIN)
+#include <Windows.h>
 #endif
 
 bool saveToFilesystem(const QPixmap& capture,
@@ -180,10 +182,16 @@ bool saveToFilesystemGUI(const QPixmap& capture)
         defaultSavePath =
           QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
     }
-    // check if ctrl is pressed and if so, save as jpg regardless of the default extension
-    QString saveExt = (QApplication::keyboardModifiers() & Qt::ControlModifier)?
-        "jpg":
-        ConfigHandler().saveAsFileExtension();
+    // check if left ctrl is pressed and if so, save as jpg regardless of the default extension
+#ifdef Q_OS_WIN
+    bool leftCtrl = (GetAsyncKeyState(VK_LCONTROL) & 0x8000) != 0;
+    QString saveExt = (leftCtrl && (QApplication::keyboardModifiers() == Qt::ControlModifier))
+#else
+    QString saveExt = (QApplication::keyboardModifiers() == Qt::ControlModifier)
+#endif
+        ? "jpg"
+        : ConfigHandler().saveAsFileExtension();
+
     QString savePath = FileNameHandler().properScreenshotPath(
       defaultSavePath, saveExt);
 #if defined(Q_OS_MACOS)
