@@ -896,15 +896,28 @@ void GeneralConf::initLanguageSelection()
 
     // Sort available languages alphabetically
     std::sort(availableLanguages.begin(), availableLanguages.end());
+    availableLanguages.prepend("en_US");
+    QStringList priorityLanguages = {"zh_CN",};
+    for (const QString &lang : priorityLanguages) {
+        if (availableLanguages.removeOne(lang)) {
+            availableLanguages.prepend(lang);
+        }
+    }
 
     // Add language options
     for (const QString& langCode : availableLanguages) {
         QLocale locale(langCode);
-        QString languageName = locale.nativeLanguageName();
+        QString languageName = locale.nativeLanguageName().trimmed();
         // Capitalize first letter
         if (!languageName.isEmpty()) {
-            languageName[0] = languageName[0].toUpper();
+            if (langCode == "en_US")
+                languageName = "English";
+            else
+                languageName[0] = languageName[0].toUpper();
+        } else {
+           languageName = langCode;
         }
+
         m_languageSelection->addItem(languageName, langCode);
     }
 

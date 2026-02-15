@@ -2202,18 +2202,102 @@ void CaptureWidget::saveCurrentAllWnd()
             return TRUE;
         }, reinterpret_cast<LPARAM>(&win)
     );
-    const auto cyEdge = GetSystemMetrics(SM_CYEDGE);
-    const auto cxEdge = GetSystemMetrics(SM_CXEDGE);
+    
     for (const auto hwnd : win) {
-        BRECT brect{ true };
-        GetWindowRect(hwnd, &(brect.rect));
-        const LONG classStyle = GetClassLong(hwnd, GCL_STYLE);
-        if (classStyle & (CS_DROPSHADOW | CS_BYTEALIGNWINDOW)) {
-            brect.rect.left += cxEdge;
-            brect.rect.right -= cxEdge;
-            brect.rect.bottom -= cyEdge;
+        // Skip invisible windows
+        if (!IsWindowVisible(hwnd)) {
+            continue;
         }
-        m_allWinData.rects.insert(brect);
+        
+        BRECT brect{ true };
+        RECT windowRect;
+        if (!GetWindowRect(hwnd, &windowRect)) {
+            continue;
+        }
+        
+        // Try to get the actual client area and convert to screen coordinates
+        RECT clientRect;
+        RECT adjustedRect = windowRect;
+        
+        if (GetClientRect(hwnd, &clientRect)) {
+            // Get the client area size
+            POINT clientTopLeft = { 0, 0 };
+            POINT clientBottomRight = { 
+                clientRect.right, 
+                clientRect.bottom 
+            };
+            ClientToScreen(hwnd, &clientTopLeft);
+            ClientToScreen(hwnd, &clientBottomRight);
+            
+            // Calculate border sizes
+            int leftBorder = clientTopLeft.x - windowRect.left;
+            int topBorder = clientTopLeft.y - windowRect.top;
+            int rightBorder = windowRect.right - clientBottomRight.x;
+            int bottomBorder = windowRect.bottom - clientBottomRight.y;
+            
+            // Adjust rect by removing borders, including the top border
+            // to exclude extra pixels above the title bar
+            // Only shrink if borders are reasonable (not negative or too large)
+            if (leftBorder >= 0 && leftBorder <= 20 &&
+                topBorder >= 0 && topBorder <= 20 &&
+                rightBorder >= 0 && rightBorder <= 20 &&
+                bottomBorder >= 0 && bottomBorder <= 20) {
+                
+                adjustedRect.left += leftBorder + 1;
+                adjustedRect.top += topBorder + 2;
+                adjustedRect.right -= rightBorder + 1;
+                adjustedRect.bottom -= bottomBorder + 1;
+            }
+        }
+        
+        brect.rect = adjustedRect;
+        
+        // Check if this window is occluded by checking multiple points
+        // Use adjusted rect for visibility check
+        POINT checkPoints[] = {
+            { (adjustedRect.left + adjustedRect.right) / 2, 
+              (adjustedRect.top + adjustedRect.bottom) / 2 },  // center
+            { adjustedRect.left + 5, adjustedRect.top + 5 },   // top-left
+            { adjustedRect.right - 5, adjustedRect.top + 5 },  // top-right
+            { adjustedRect.left + 5, adjustedRect.bottom - 5 }, // bottom-left
+            { adjustedRect.right - 5, adjustedRect.bottom - 5 } // bottom-right
+        };
+        
+        bool isVisible = false;
+        
+        // Check if any of these points belong to this window or its children
+        for (const auto& point : checkPoints) {
+            // Ensure point is within bounds
+            if (point.x < adjustedRect.left || point.x > adjustedRect.right ||
+                point.y < adjustedRect.top || point.y > adjustedRect.bottom) {
+                continue;
+            }
+            
+            HWND topWindowAtPos = ::WindowFromPoint(point);
+            if (topWindowAtPos == nullptr) {
+                continue;
+            }
+            
+            // Check if this window or one of its children is at this position
+            HWND checkHwnd = topWindowAtPos;
+            while (checkHwnd != nullptr) {
+                if (checkHwnd == hwnd) {
+                    isVisible = true;
+                    break;
+                }
+                checkHwnd = ::GetParent(checkHwnd);
+            }
+            
+            if (isVisible) {
+                break;
+            }
+        }
+        
+        // Only add visible windows (not completely occluded)
+        if (isVisible) {
+            m_allWinData.rects.insert(brect);
+        }
+        
         saveCurrentAllChildWnd(hwnd);
     }
 #ifdef QT_DEBUG0
