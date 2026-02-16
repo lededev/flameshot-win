@@ -194,6 +194,7 @@ bool saveToFilesystemGUI(const QPixmap& capture)
 
     QString savePath = FileNameHandler().properScreenshotPath(
       defaultSavePath, saveExt);
+    savePath = QDir::toNativeSeparators(savePath);
 #if defined(Q_OS_MACOS)
     for (QWidget* widget : qApp->topLevelWidgets()) {
         QString className(widget->metaObject()->className());
