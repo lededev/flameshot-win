@@ -248,7 +248,7 @@ private:
     } m_allWinData;
     std::vector<BRECT> m_ansRects;
     uint32_t m_rectSelectLevel = 0;
-    void saveCurrentAllWnd();
+    void saveCurrentVisibleWnd();
     void saveCurrentAllChildWnd(HWND hwnd);
 #endif
 };

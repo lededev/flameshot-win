@@ -129,7 +129,7 @@ CaptureWidget::CaptureWidget(const CaptureRequest& req,
         );
 #endif
 
-        saveCurrentAllWnd();
+        saveCurrentVisibleWnd();
 
         for (QScreen* const screen : QGuiApplication::screens()) {
             QPoint topLeftScreen = screen->geometry().topLeft();
@@ -2191,58 +2191,73 @@ void CaptureWidget::saveCurrentAllChildWnd(HWND hwnd)
     );
 }
 
-void CaptureWidget::saveCurrentAllWnd()
+void CaptureWidget::saveCurrentVisibleWnd()
 {
-    std::vector<HWND> win;
+    // Step 1: Enumerate all top-level windows
+    std::vector<HWND> allTopWindows;
     EnumWindows([](HWND hwnd, LPARAM lparam) -> BOOL {
-            if (NULL == lparam)
-                return TRUE;
-            const auto pWin = reinterpret_cast<std::vector<HWND> *>(lparam);
-            pWin->push_back(hwnd);
+        if (NULL == lparam)
             return TRUE;
-        }, reinterpret_cast<LPARAM>(&win)
-    );
+        auto* pWin = reinterpret_cast<std::vector<HWND>*>(lparam);
+        pWin->push_back(hwnd);
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&allTopWindows));
 
-    for (const auto hwnd : win) {
+    // Step 2: Fast pre-filter to exclude obviously invisible windows
+    std::vector<HWND> visibleCandidates;
+    for (const auto hwnd : allTopWindows) {
         // Skip invisible windows
-        if (!IsWindowVisible(hwnd)) {
+        if (!IsWindowVisible(hwnd))
             continue;
-        }
 
-        BRECT brect{ true };
+        // Skip minimized windows
+        if (IsIconic(hwnd))
+            continue;
+
+        // Skip tool windows (status bars, floating toolbars, etc.)
+        LONG exStyle = GetWindowLongW(hwnd, GWL_EXSTYLE);
+        if (exStyle & WS_EX_TOOLWINDOW)
+            continue;
+
+        // Get window rectangle, skip degenerate rects
+        RECT rect;
+        if (!GetWindowRect(hwnd, &rect))
+            continue;
+        if (rect.right <= rect.left || rect.bottom <= rect.top)
+            continue;
+
+        visibleCandidates.push_back(hwnd);
+    }
+
+    // Step 3: For each candidate, compute visible region using HRGN region ops
+    //         to check occlusion, instead of point sampling
+    for (size_t i = 0; i < visibleCandidates.size(); ++i) {
+        HWND hwnd = visibleCandidates[i];
+
         RECT windowRect;
-        if (!GetWindowRect(hwnd, &windowRect)) {
+        if (!GetWindowRect(hwnd, &windowRect))
             continue;
-        }
 
-        // Try to get the actual client area and convert to screen coordinates
-        RECT clientRect;
+        // Try to get client-area adjusted rectangle
         RECT adjustedRect = windowRect;
+        RECT clientRect;
 
         if (GetClientRect(hwnd, &clientRect)) {
-            // Get the client area size
-            POINT clientTopLeft = { 0, 0 };
-            POINT clientBottomRight = { 
-                clientRect.right, 
-                clientRect.bottom 
-            };
+            POINT clientTopLeft = {0, 0};
+            POINT clientBottomRight = {clientRect.right, clientRect.bottom};
             ClientToScreen(hwnd, &clientTopLeft);
             ClientToScreen(hwnd, &clientBottomRight);
 
-            // Calculate border sizes
             int leftBorder = clientTopLeft.x - windowRect.left;
             int topBorder = clientTopLeft.y - windowRect.top;
             int rightBorder = windowRect.right - clientBottomRight.x;
             int bottomBorder = windowRect.bottom - clientBottomRight.y;
 
-            // Adjust rect by removing borders, including the top border
-            // to exclude extra pixels above the title bar
-            // Only shrink if borders are reasonable (not negative or too large)
+            // Only adjust if borders are reasonable
             if (leftBorder >= 0 && leftBorder <= 20 &&
                 topBorder >= 0 && topBorder <= 20 &&
                 rightBorder >= 0 && rightBorder <= 20 &&
                 bottomBorder >= 0 && bottomBorder <= 20) {
-
                 adjustedRect.left += leftBorder + 1;
                 adjustedRect.top += topBorder + 2;
                 adjustedRect.right -= rightBorder + 1;
@@ -2250,103 +2265,70 @@ void CaptureWidget::saveCurrentAllWnd()
             }
         }
 
-        brect.rect = adjustedRect;
+        // Re-validate adjusted rect
+        if (adjustedRect.right <= adjustedRect.left || adjustedRect.bottom <= adjustedRect.top)
+            continue;
 
-        // Check if this window is occluded by checking multiple points
-        // across the entire rectangle to determine if it's visible
-        int visiblePointCount = 0;
-        int totalCheckPoints = 0;
+        // Create visible region for this window
+        HRGN visibleRgn = CreateRectRgn(adjustedRect.left, adjustedRect.top,
+                                        adjustedRect.right, adjustedRect.bottom);
+        if (!visibleRgn)
+            continue;
 
-        // Create a grid of check points across the rectangle
-        // This gives a more accurate assessment of visibility
-        const int gridSpacing = 50;  // Check points every 50 pixels
-        int width = adjustedRect.right - adjustedRect.left;
-        int height = adjustedRect.bottom - adjustedRect.top;
+        // Subtract all higher (Z-order) windows' rectangles using HRGN
+        // The visible candidates list is in Z-order (from EnumWindows order)
+        // Windows with smaller index in visibleCandidates are on top (higher Z-order)
+        for (size_t j = 0; j < i; ++j) {
+            HWND above = visibleCandidates[j];
 
-        // If rectangle is too small, use corner checks
-        if (width < 100 || height < 100) {
-            POINT checkPoints[] = {
-                { (adjustedRect.left + adjustedRect.right) / 2,
-                  (adjustedRect.top + adjustedRect.bottom) / 2 },  // center
-                { adjustedRect.left + 5, adjustedRect.top + 5 },   // top-left
-                { adjustedRect.right - 5, adjustedRect.top + 5 },  // top-right
-                { adjustedRect.left + 5, adjustedRect.bottom - 5 }, // bottom-left
-                { adjustedRect.right - 5, adjustedRect.bottom - 5 } // bottom-right
-            };
+            RECT aboveRect;
+            if (!GetWindowRect(above, &aboveRect))
+                continue;
+            if (aboveRect.right <= aboveRect.left || aboveRect.bottom <= aboveRect.top)
+                continue;
 
-            for (const auto& point : checkPoints) {
-                // Ensure point is within bounds
-                if (point.x < adjustedRect.left || point.x > adjustedRect.right ||
-                    point.y < adjustedRect.top || point.y > adjustedRect.bottom) {
-                    continue;
-                }
+            // Skip transparent windows (they don't occlude)
+            LONG exStyleAbove = GetWindowLongW(above, GWL_EXSTYLE);
+            if (exStyleAbove & WS_EX_TRANSPARENT)
+                continue;
 
-                totalCheckPoints++;
-                HWND topWindowAtPos = ::WindowFromPoint(point);
-                if (topWindowAtPos == nullptr) {
-                    continue;
-                }
+            // Subtract the above window's rectangle from visible region
+            HRGN aboveRgn = CreateRectRgn(aboveRect.left, aboveRect.top,
+                                          aboveRect.right, aboveRect.bottom);
+            if (!aboveRgn)
+                continue;
 
-                // Check if this window or one of its children is at this position
-                HWND checkHwnd = topWindowAtPos;
-                while (checkHwnd != nullptr) {
-                    if (checkHwnd == hwnd) {
-                        visiblePointCount++;
-                        break;
-                    }
-                    checkHwnd = ::GetParent(checkHwnd);
-                }
-            }
-        } else {
-            // For larger rectangles, check a grid of points
-            for (int x = adjustedRect.left; x < adjustedRect.right; x += gridSpacing) {
-                for (int y = adjustedRect.top; y < adjustedRect.bottom; y += gridSpacing) {
-                    totalCheckPoints++;
-                    HWND topWindowAtPos = ::WindowFromPoint({ x, y });
-                    if (topWindowAtPos == nullptr) {
-                        continue;
-                    }
+            CombineRgn(visibleRgn, visibleRgn, aboveRgn, RGN_DIFF);
+            DeleteObject(aboveRgn);
 
-                    // Check if this window or one of its children is at this position
-                    HWND checkHwnd = topWindowAtPos;
-                    while (checkHwnd != nullptr) {
-                        if (checkHwnd == hwnd) {
-                            visiblePointCount++;
-                            break;
-                        }
-                        checkHwnd = ::GetParent(checkHwnd);
-                    }
-                }
+            // Early exit: if completely occluded, stop processing
+            RECT boundBox;
+            if (GetRgnBox(visibleRgn, &boundBox) == NULLREGION) {
+                DeleteObject(visibleRgn);
+                visibleRgn = nullptr;
+                break;
             }
         }
 
-        // Consider a window visible if at least one sampled point hits it.
-        // We only want to exclude windows that are completely occluded by
-        // other top-level windows. Requiring at least one visible point is
-        // robust and avoids keeping fully-covered background windows.
-        bool isVisible = (totalCheckPoints > 0) && (visiblePointCount > 0);
+        if (!visibleRgn)
+            continue;
+
+        // Check final visibility
+        RECT boundBox;
+        int regionType = GetRgnBox(visibleRgn, &boundBox);
+        bool isVisible = (regionType != NULLREGION);
+        DeleteObject(visibleRgn);
 
         if (isVisible) {
+            // Save the main window
+            BRECT brect{true};
+            brect.rect = adjustedRect;
             m_allWinData.rects.insert(brect);
-            // Only enumerate and save child windows for windows that were
-            // accepted as visible. Child windows of fully occluded parents
-            // are also effectively occluded and should not be included.
+
+            // Enumerate child windows only for visible top-level windows
             saveCurrentAllChildWnd(hwnd);
         }
     }
-#ifdef QT_DEBUG0
-    if (!m_lpAllWinData.rects.size())
-        return;
-    QFile qf("z:\\win_all.txt");
-    if (qf.open(QIODevice::WriteOnly | QIODevice::Text))
-    {
-        QTextStream out(&qf);
-        for (auto r : m_lpAllWinData.rects)
-        {
-            out << "Rect: " << r.left << "," << r.top << "," << r.right << "," << r.bottom << "\n";
-        }
-    }
-#endif
 }
 
 void CaptureWidget::selectWinUp()
