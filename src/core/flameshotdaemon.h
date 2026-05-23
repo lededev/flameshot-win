@@ -67,6 +67,8 @@ private:
 
     void initTrayIcon();
     void enableTrayIcon(bool enable);
+    void autoSavePinImage(const QPixmap& pixmap);
+    void cleanupOldPinImages(const QString& pinAutoSaveDir);
 
 private:
     static QDBusMessage createMethodCall(const QString& method);

@@ -15,6 +15,11 @@
 #include <QDBusMessage>
 #include <QPixmap>
 #include <QRect>
+#include <QDir>
+#include <QStandardPaths>
+#include <QDateTime>
+#include <QFile>
+#include <QFileInfo>
 
 #if !defined(DISABLE_UPDATE_CHECKER)
 #include <QDesktopServices>
@@ -295,6 +300,9 @@ void FlameshotDaemon::attachPin(const QPixmap& pixmap, QRect geometry, const QBy
 
     pinWidget->show();
     pinWidget->activateWindow();
+
+    // Auto-save pin image
+    autoSavePinImage(pixmap);
 }
 
 void FlameshotDaemon::attachScreenshotToClipboard(const QPixmap& pixmap)
@@ -450,6 +458,75 @@ void FlameshotDaemon::call(const QDBusMessage& m)
     QDBusConnection sessionBus = QDBusConnection::sessionBus();
     checkDBusConnection(sessionBus);
     sessionBus.call(m);
+}
+
+void FlameshotDaemon::autoSavePinImage(const QPixmap& pixmap)
+{
+    // Get the base directory for saving pin images
+    QString baseDir = ConfigHandler().savePath();
+
+    // If no save path is configured, use USERPROFILE on Windows
+    if (baseDir.isEmpty()) {
+#ifdef Q_OS_WIN
+        baseDir = qgetenv("USERPROFILE");
+#else
+        baseDir = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
+#endif
+    }
+
+    // Create pin_autosave subdirectory
+    QString pinAutoSaveDir = baseDir + QDir::separator() + "pin_autosave";
+    QDir dir(pinAutoSaveDir);
+
+    if (!dir.exists()) {
+        if (!dir.mkpath(pinAutoSaveDir)) {
+            AbstractLogger::warning() << "Failed to create pin_autosave directory: " + pinAutoSaveDir;
+            return;
+        }
+    }
+
+    // Generate filename with timestamp
+    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd_hh-mm-ss-zzz");
+    QString filename = pinAutoSaveDir + QDir::separator() + "pin_" + timestamp + ".png";
+
+    // Ensure the filename is unique
+    int counter = 1;
+    QString basePath = pinAutoSaveDir + QDir::separator() + "pin_" + timestamp;
+    while (QFileInfo::exists(filename)) {
+        filename = basePath + "_" + QString::number(counter) + ".png";
+        ++counter;
+    }
+
+    // Save the image
+    if (pixmap.save(filename, "PNG")) {
+        AbstractLogger::info() << "Pin image auto-saved to: " + filename;
+        // Cleanup old images if needed
+        cleanupOldPinImages(pinAutoSaveDir);
+    } else {
+        AbstractLogger::warning() << "Failed to auto-save pin image to: " + filename;
+    }
+}
+
+void FlameshotDaemon::cleanupOldPinImages(const QString& pinAutoSaveDir)
+{
+    QDir dir(pinAutoSaveDir);
+    QStringList filters;
+    filters << "pin_*.png";
+    dir.setNameFilters(filters);
+
+    // Get all PNG files in the directory, sorted by time (oldest first)
+    QFileInfoList fileList = dir.entryInfoList(QDir::Files, QDir::Time);
+
+    // Check if we have 1000 or more images
+    if (fileList.count() >= 1000) {
+        // Delete the oldest 200 images
+        for (int i = 0; i < 200 && i < fileList.count(); ++i) {
+            if (!QFile::remove(fileList.at(i).absoluteFilePath())) {
+                AbstractLogger::warning() << "Failed to delete old pin image: " + fileList.at(i).absoluteFilePath();
+            }
+        }
+        AbstractLogger::info() << "Cleaned up 200 oldest pin images";
+    }
 }
 
 // STATIC ATTRIBUTES
